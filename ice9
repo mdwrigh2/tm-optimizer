@@ -1,0 +1,89 @@
+#!/usr/bin/env python
+
+import sys
+import re
+
+# Global necessary to maintain state of memory when inserting data into it
+# 1 holds the size of the memory
+
+class Instruction(object):
+    def __init__(self, lineno, instr, args):
+        self.instr = instr.upper()
+        self.line = lineno
+        self.args = args
+
+    def __str__(self):
+        if self.instr in ["HALT", "IN", "OUT", "INB", "OUTB", "OUTC", "OUTNL", "ADD", "SUB", "MUL", "DIV"]:
+            string =  "%d: %s %d, %d, %d" % (self.line, self.instr, self.args[0], self.args[1], self.args[2])
+        else:
+            string =  "%d: %s %d, %d(%d)" % (self.line, self.instr, self.args[0], self.args[1], self.args[2])
+
+        return string
+
+    def __repr__(self):
+        return self.__str__()
+
+    def to_absolute(self):
+        '''Converts jump instructions to absolute addresses'''
+        if self.is_jump() and self.args[2] == 7:
+            self.args[2] = 0
+            self.args[1] = self.args[1] + self.line + 1
+
+    def is_jump(self):
+        if self.instr in ["LDC", "LDA"] and self.args[0] == 7:
+            return True
+        elif self.instr in ["JLT", "JLE", "JEQ", "JNE", "JGE", "JGT"]:
+            return True
+        else:
+            return False
+
+
+
+def parse(string):
+    lines = string.split('\n')
+    lines = map(lambda x: x.strip(), lines) # strip right and left spacing, it's unneccessary
+    # Now I need to grab the data. Data and instructions have to be handled separately.
+    data = filter(lambda x: re.search(r'\.[s]?data', x,re.I), lines)
+    instrs = filter(lambda x: not re.search(r'\.[s]?data', x,re.I), lines)
+    instrs = map(lambda x: x.replace(',',' '), instrs)
+    instrs = map(lambda x: x.replace('(',' '), instrs) 
+    instrs = map(lambda x: x.replace(')',' '), instrs)
+    instrs = map(lambda x: x.replace(':',' '), instrs)
+    instrs = map(lambda x: x.split(), instrs)
+    instrs = filter(lambda x: x, instrs) # remove empty lines
+    instructions = []
+    for instr in instrs:
+        if re.match(r'\*', instr[0]):
+            print "Skipping comment!"
+            print " ".join(instr)
+            continue
+        instructions.append(Instruction(int(instr[0]), instr[1], [int(instr[2]), int(instr[3]), int(instr[4])]))
+
+    map(lambda x: x.to_absolute(), instructions)
+    return instructions
+
+def jump_chaining(instrs):
+
+    lines = {x.line : x for x in instrs}
+    changes = True
+    while changes:
+        changes = False
+        for i in instrs:
+            if i.is_jump():
+                try:
+                    target = lines[i.args[1]]
+                    if target.is_jump():
+                        changes = True
+                        i.args[1] = target.args[1]
+                except:
+                    # Jump out of range, but we don't care
+                    continue
+    return instrs
+
+
+if __name__ == "__main__":
+    code = sys.stdin.read()
+    instrs = parse(code)
+    instrs = jump_chaining(instrs)
+    for i in instrs:
+        print i
