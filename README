@@ -1,0 +1,24 @@
+An optimizer for TinyMachine assembly with two assumptions:
+  1) The 0 register always contains 0
+  2) There are 8 registers (meaning the 8th register contains the current program instruction)
+
+USAGE
+./ice9 out.tm < in.tm
+
+ice9 will read in the tiny machine instructions from stdin, and write them to the file contained in the first argument.
+
+
+Optimizations Performed:
+  - Constant Propagation
+    This will replace all statements where the values are known with a constant load, and all conditional jumps
+    with an unconditional jump or a no-op depending on whether the jump should be made or not. This doesn't actually remove instructions,
+    but it is a reduction in strength and will allow dead code removal to remove a bunch of instructions rendered unnecessary by this .
+  - Dead Code Removal
+    This should be a global optimization. Live analysis is performed globally and then locally to determine what statements are never actually used.
+    I also remove any blocks that can't be reached by looking at the "IN" of the block.
+  - Jump Chaining
+    I follow all jumps and remove intermediate steps that are guaranteed to happen. This doesn't necessarily remove instructions in the file,
+    but it should remove instructions executed.
+  - No-Op Removal
+    Any no-ops such as loading the register into itself, adding 0 to itself and storing it, etc. are removed.
+    The program is then recomposed with new line numbering.

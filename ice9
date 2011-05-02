@@ -248,6 +248,9 @@ def constant_folding(blocks):
                 r[i.args[0]] = None
             if i.instr == "LDA" and r[i.args[2]] is None:
                 r[i.args[0]] = None
+            if i.instr == "LDA" and r[i.args[2]] is not None:
+                i.instr = "LDC"
+                i.args[1] = r[i.args[2]] + i.args[1]
             if i.instr in ["ADD", "SUB", "MUL", "DIV"]:
                 if r[i.args[1]] is None or r[i.args[2]] is None:
                     r[i.args[0]] = None
@@ -409,7 +412,7 @@ def liveness_analysis(blocks):
         for i in reversed(b.instrs):
             
             if i.instr == "IN" or i.instr == "INB":
-                i.liveness = l[i.args[0]]
+                i.liveness = True
                 l[i.args[0]] = False
             
             if i.instr == "OUT" or i.instr == "OUTB" or i.instr == "OUTC":
@@ -449,11 +452,23 @@ def liveness_analysis(blocks):
 
     return blocks
 
+def reduce_to_halt(instrs):
+    halt = True
+    for i in instrs:
+        if i.instr in ["INB", "IN", "OUT", "OUTC", "OUTB", "OUTNL"]:
+            halt = False
+
+    if halt:
+        return [Instruction(0, "HALT", [0,0,0])]
+    else:
+        return instrs
+
 
 if __name__ == "__main__":
     code = sys.stdin.read()
     instrs = parse(code)
     instrs = jump_chaining(instrs)
+    instrs = reduce_to_halt(instrs)
     blocks = basic_blocks(instrs)
     blocks = simple_dead_code(blocks)
     blocks = constant_folding(blocks)
