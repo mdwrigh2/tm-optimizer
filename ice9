@@ -7,16 +7,22 @@ import re
 # 1 holds the size of the memory
 
 class Instruction(object):
-    def __init__(self, lineno, instr, args):
+    def __init__(self, lineno, instr, args, comments = None):
+        if not comments:
+            self.comments = ""
+        else:
+            self.comments = comments
         self.instr = instr.upper()
         self.line = lineno
         self.args = args
+        self.registers = None
+        self.liveness = True
 
     def __str__(self):
         if self.instr in ["HALT", "IN", "OUT", "INB", "OUTB", "OUTC", "OUTNL", "ADD", "SUB", "MUL", "DIV"]:
-            string =  "%d: %s %d, %d, %d" % (self.line, self.instr, self.args[0], self.args[1], self.args[2])
+            string =  "%d: %s %d, %d, %d * %s" % (self.line, self.instr, self.args[0], self.args[1], self.args[2], str(self.liveness))
         else:
-            string =  "%d: %s %d, %d(%d)" % (self.line, self.instr, self.args[0], self.args[1], self.args[2])
+            string =  "%d: %s %d, %d(%d) * %s" % (self.line, self.instr, self.args[0], self.args[1], self.args[2], str(self.liveness))
 
         return string
 
@@ -37,12 +43,85 @@ class Instruction(object):
         else:
             return False
 
+    def is_cond_jump(self):
+        if self.instr in ["JLT", "JLE", "JEQ", "JNE", "JGE", "JGT"]:
+            return True
+        else:
+            return False
 
+    def is_uncond_jump(self):
+        if self.instr in ["LDC", "LDA"] and self.args[0] == 7:
+            return True
+        else:
+            return False
+
+    def __cmp__(self, other):
+        return cmp(self.line, other.line)
+
+bid = 0
+exit_block = None
+
+
+class Block(object):
+    def __init__(self, instrs=None):
+        if instrs:
+            self.instrs = instrs
+        else:
+            self.instrs = []
+        self.in_block = []
+        self.out_block = []
+        global bid
+        self.bid = bid
+        bid += 1
+        self.defd = set()
+        self.use = set()
+        self.var_in = set()
+        self.var_out = set()
+
+    def __str__(self):
+        string = "* BLOCK %d\n" % self.bid
+        string += "* IN { "
+        for b in self.in_block:
+            string+= "%d " % (b.bid)
+        string += "}\n"
+        string += "* OUT { "
+        for b in self.out_block:
+            string+= "%d " % (b.bid)
+        string += "}\n"
+        string += "* def %s\n" % str(self.defd)
+        string += "* use %s\n" % str(self.use)
+        string += "* IN VARS { "
+        for i in self.var_in:
+            string += "%d " % i
+        string += "}\n"
+        string += "* OUT VARS { "
+        for i in self.var_out:
+            string += "%d " % i
+        string += "}\n"
+        for i in self.instrs:
+            string += str(i)
+            string += "\n"
+
+        return string
+
+    def __repr__(self):
+        return str(self)
+
+    def def_or_use(self, register, is_defined):
+        if is_defined:
+            if register not in self.use:
+                self.defd.add(register)
+        else:
+            self.use.add(register)
+
+
+data = None
 
 def parse(string):
     lines = string.split('\n')
     lines = map(lambda x: x.strip(), lines) # strip right and left spacing, it's unneccessary
     # Now I need to grab the data. Data and instructions have to be handled separately.
+    global data
     data = filter(lambda x: re.search(r'\.[s]?data', x,re.I), lines)
     instrs = filter(lambda x: not re.search(r'\.[s]?data', x,re.I), lines)
     instrs = map(lambda x: x.replace(',',' '), instrs)
@@ -52,18 +131,24 @@ def parse(string):
     instrs = map(lambda x: x.split(), instrs)
     instrs = filter(lambda x: x, instrs) # remove empty lines
     instructions = []
+    last_line = -1
     for instr in instrs:
         if re.match(r'\*', instr[0]):
-            print "Skipping comment!"
-            print " ".join(instr)
             continue
+        i = last_line + 1
+        current_instruction = int(instr[0])
+        while last_line < i < current_instruction:
+            instructions.append(Instruction(i, "HALT", [0,0,0]))
+            i += 1 
         instructions.append(Instruction(int(instr[0]), instr[1], [int(instr[2]), int(instr[3]), int(instr[4])]))
+        last_line = current_instruction
+        # I'm stripping comments here. I can get them back though, but it'll take a bit more work
 
     map(lambda x: x.to_absolute(), instructions)
     return instructions
 
 def jump_chaining(instrs):
-
+    ''' This removes unnecessary extra jumps '''
     lines = {x.line : x for x in instrs}
     changes = True
     while changes:
@@ -72,7 +157,7 @@ def jump_chaining(instrs):
             if i.is_jump():
                 try:
                     target = lines[i.args[1]]
-                    if target.is_jump():
+                    if target.is_uncond_jump():
                         changes = True
                         i.args[1] = target.args[1]
                 except:
@@ -80,10 +165,313 @@ def jump_chaining(instrs):
                     continue
     return instrs
 
+def basic_blocks(instrs):
+    lines = {x.line : x for x in instrs}
+    blocks = [0]
+    for i in instrs:
+        if i.is_jump():
+            blocks.append(i.args[1])
+            if i.is_cond_jump():
+                blocks.append(i.line + 1)
+    upper = max(instrs)
+    # Remove out of bounds jumps
+    filter(lambda x: x < upper.line+1, blocks)
+    # Add the upper bound, so I can use it when grabbing things between lines for blocks
+    blocks.append(upper.line+1)
+    blocks = list(set(blocks))
+    blocks.sort()
+    bb = []
+    for i in range(1, len(blocks)):
+        block = Block(filter(lambda x: blocks[i-1] <= x.line < blocks[i], instrs))
+        bb.append(block)
+        for i in block.instrs:
+            i.block = block
+    global exit_block
+    exit_block = Block()
+    start_block = Block()
+    start_block.bid = -1
+    bb.append(exit_block)
+    bb[0].in_block.append(start_block)
+    for i in instrs:
+        if i.is_jump():
+            try:
+                lines[i.args[1]].block.in_block.append(i.block)
+                i.block.out_block.append(lines[i.args[1]].block)
+            except KeyError:
+                exit_block.in_block.append(i.block)
+                i.block.out_block.append(exit_block)
+            if i.is_cond_jump():
+                try:
+                    lines[i.line +1].block.in_block.append(i.block)
+                    i.block.out_block.append(lines[i.line+1].block)
+                except KeyError:
+                    exit_block.in_block.append(i.block)
+                    i.block.out_block.append(exit_block)
+    for b in bb:
+        if not b.instrs:
+            continue
+        i = b.instrs[-1]
+        if not i.is_uncond_jump():
+            try:
+                lines[i.line+1].block.in_block.append(b)
+                b.out_block.append(lines[i.line+1].block)
+            except KeyError:
+                exit_block.in_block.append(b)
+                b.out_block.append(exit_block)
+
+    # Uniquify blocks
+    for b in bb:
+        b.out_block = list(set(b.out_block))
+        b.out_block.sort()
+        b.in_block = list(set(b.in_block))
+        b.in_block.sort()
+
+    return bb
+    
+
+
+def simple_dead_code(blocks):
+    new_blocks = []
+    for b in blocks:
+        if b.in_block:
+            new_blocks.append(b)
+    return new_blocks
+
+def constant_folding(blocks):
+    for b in blocks:
+        r = [None for i in range(0,8)]
+        r[0] = 0
+        for i in b.instrs:
+            if i.instr == "LDC" or (i.instr == "LDA" and i.args[2] == 0):
+                r[i.args[0]] = i.args[1] 
+            if i.instr in ["IN", "INB", "LD"]:
+                r[i.args[0]] = None
+            if i.instr == "LDA" and r[i.args[2]] is None:
+                r[i.args[0]] = None
+            if i.instr in ["ADD", "SUB", "MUL", "DIV"]:
+                if r[i.args[1]] is None or r[i.args[2]] is None:
+                    r[i.args[0]] = None
+                else:
+                    if i.instr == "ADD":
+                        val = r[i.args[1]] + r[i.args[2]]
+                    elif i.instr == "SUB":
+                        val = r[i.args[1]] - r[i.args[2]]
+                    elif i.instr == "MUL":
+                        val = r[i.args[1]] * r[i.args[2]]
+                    elif i.instr == "DIV":
+                        val = r[i.args[1]] / r[i.args[2]]
+                    else:
+                        print "Error!"
+                        print i.instr
+                        sys.exit(1)
+                    r[i.args[0]] = val
+                    i.instr = "LDC"
+                    i.args[2] = 0
+                    i.args[1] = val
+            if i.is_cond_jump() and r[i.args[0]] is not None:
+                print r
+                if i.instr == "JLT":
+                    if r[i.args[0]] < 0:
+                        i.args[0] = 7
+                    else:
+                        i.args = [0,0,0]
+
+                if i.instr == "JLE":
+                    if r[i.args[0]] <= 0:
+                        i.args[0] = 7
+                    else:
+                        i.args = [0,0,0]
+
+                if i.instr == "JEQ":
+                    if r[i.args[0]] == 0:
+                        i.args[0] = 7
+                    else:
+                        i.args = [0,0,0]
+
+                if i.instr == "JNE":
+                    if r[i.args[0]] != 0:
+                        i.args[0] = 7
+                    else:
+                        i.args = [0,0,0]
+
+                if i.instr == "JGE":
+                    if r[i.args[0]] >= 0:
+                        i.args[0] = 7
+                    else:
+                        i.args = [0,0,0]
+
+                if i.instr == "JGT":
+                    if r[i.args[0]] > 0:
+                        i.args[0] = 7
+                    else:
+                        i.args = [0,0,0]
+                i.instr = "LDC"
+
+
+            i.registers = r[:]
+
+
+    return blocks
+
+
+
+def noop_elimination(blocks):
+    removed_lines = []
+    for b in blocks:
+        removal = []
+        for i in b.instrs:
+            if i.is_jump() and i.args[1] == i.line+1:
+                removal.append(i)
+            if i.instr == "ADD" or i.instr == "SUB":
+                if (i.args[0] == i.args[1] and i.args[2] == 0) or (i.args[0]  == i.args[2] and i.args[1] == 0):
+                    removal.append(i)
+            if i.instr == "LDA" and i.args[0] == i.args[2] and i.args[1] == 0:
+                removal.append(i)
+            if i.instr == "LDC" and i.args[0] == 0 and i.args[1] == 0:
+                removal.append(i)
+        for r in removal:
+            b.instrs.remove(r)
+            removed_lines.append(r.line)
+
+    lines = {}
+    line = 0
+    for b in blocks:
+        for i in b.instrs:
+            lines[i.line] = line
+            i.line = line
+            line += 1
+    for b in blocks:
+        for i in b.instrs:
+            if i.is_jump():
+                try:
+                    while i.args[1] in removed_lines:
+                        i.args[1] = i.args[1] + 1
+                    i.args[1] = lines[i.args[1]]
+                except KeyError:
+                    # This is the line after the last instruction
+                    # i.e. the exit node.
+                    i.args[1] = line
+
+
+    return blocks
+    
+def compute_def_and_use(blocks):
+    for b in blocks:
+        d = [False for i in range(8)]
+        d[0] = True
+        d[7] = True
+        for i in b.instrs:
+            if i.instr == "IN" or i.instr == "INB":
+                d[i.args[0]] = True
+
+            if i.instr in ["OUT", "OUTB", "OUTC"]:
+                b.def_or_use(i.args[0], d[i.args[0]])
+                    
+
+            if i.instr in ["ADD", "SUB", "MUL", "DIV"]:
+                b.def_or_use(i.args[1], d[i.args[1]])
+                b.def_or_use(i.args[2], d[i.args[2]])
+                d[i.args[0]] = True
+
+            if i.instr == "LDC":
+                d[i.args[0]] = True
+
+            if i.instr == "LDA":
+                b.def_or_use(i.args[2], d[i.args[2]])
+                d[i.args[0]] = True
+
+            if i.instr == "LD":
+                b.def_or_use(i.args[2], d[i.args[2]])
+                d[i.args[0]] = True
+
+            if i.instr in ["JLT", "JLE", "JEQ", "JNE", "JGE", "JGT"]:
+                b.def_or_use(i.args[0], d[i.args[0]])
+                b.def_or_use(i.args[2], d[i.args[2]])
+
+
+def liveness_analysis(blocks):
+    bd = {b.bid : b for b in blocks}
+    changes = True
+    while changes:
+        changes = False
+        for b in blocks:
+            out_tmp = set()
+            for ob in b.out_block:
+                out_tmp = out_tmp | ob.var_in
+            in_tmp = b.use | (out_tmp - b.defd)
+            if in_tmp != b.var_in:
+                changes = True
+            b.var_in = in_tmp
+            b.var_out = out_tmp
+
+    for b in blocks:
+        l = [i in b.var_out or i == 7 for i in range(8)]
+        for i in reversed(b.instrs):
+            
+            if i.instr == "IN" or i.instr == "INB":
+                i.liveness = l[i.args[0]]
+                l[i.args[0]] = False
+            
+            if i.instr == "OUT" or i.instr == "OUTB" or i.instr == "OUTC":
+                l[i.args[0]] = True
+
+            if i.instr in ["ADD", "SUB", "MUL", "DIV"]:
+                i.liveness = l[i.args[0]]
+                l[i.args[0]] = False
+                l[i.args[1]] = i.liveness
+                l[i.args[2]] = i.liveness
+
+            if i.instr == "LDC":
+                i.liveness = l[i.args[0]]
+                l[i.args[0]] = False
+
+            if i.instr == "LDA":
+                i.liveness = l[i.args[0]]
+                l[i.args[0]] = False
+                l[i.args[2]] = i.liveness
+
+            if i.instr == "LD":
+                i.liveness = l[i.args[0]]
+                l[i.args[0]] = False
+                l[i.args[2]] = i.liveness
+
+            if i.instr == "ST":
+                l[i.args[2]] = True
+                l[i.args[0]] = True
+
+            if i.instr in ["JLT", "JLE", "JEQ", "JNE", "JGE", "JGT"]:
+                l[i.args[0]] = True
+                l[i.args[2]] = True
+        for i in b.instrs:
+            if not i.liveness:
+                i.instr = "LDC"
+                i.args = [0,0,0]
+
+    return blocks
+
 
 if __name__ == "__main__":
     code = sys.stdin.read()
     instrs = parse(code)
     instrs = jump_chaining(instrs)
-    for i in instrs:
-        print i
+    blocks = basic_blocks(instrs)
+    blocks = simple_dead_code(blocks)
+    blocks = constant_folding(blocks)
+    compute_def_and_use(blocks)
+    blocks = liveness_analysis(blocks)
+    blocks = noop_elimination(blocks)
+    if len(sys.argv) > 1:
+        f = open(sys.argv[1], "w")
+        for d in data:
+            f.write(str(d))
+            f.write("\n")
+        for b in blocks:
+            f.write(str(b))
+            f.write("\n")
+        f.close()
+    else:
+        for d in data:
+            print str(d)
+        for b in blocks:
+            print str(b)
+

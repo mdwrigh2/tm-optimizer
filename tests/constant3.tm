@@ -1,6 +1,7 @@
+*:run [], []
+*:run [], [0]
 .DATA 5
 .DATA 500
-.SDATA "Ubuntu"
 0: LDC 1, 0(0)
 1: JNE 1, 4(7)
 2: LD  1, 1(0)

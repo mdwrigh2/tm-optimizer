@@ -1,3 +1,5 @@
+*:run [17], []
+*:run [-1], []
 * write read + 0;
    0:     IN 1,0,0	read value
    1:    LDC 2,0(0)	int literal

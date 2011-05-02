@@ -1,3 +1,4 @@
+*:run [879328], []
 * write read + 9;
    0:     IN 1,0,0	read value
    1:    LDC 2,9(0)	int literal
