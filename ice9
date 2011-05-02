@@ -149,7 +149,7 @@ def parse(string):
 
 def jump_chaining(instrs):
     ''' This removes unnecessary extra jumps '''
-    lines = {x.line : x for x in instrs}
+    lines = dict((x.line, x) for x in instrs)
     changes = True
     while changes:
         changes = False
@@ -166,7 +166,7 @@ def jump_chaining(instrs):
     return instrs
 
 def basic_blocks(instrs):
-    lines = {x.line : x for x in instrs}
+    lines = dict((x.line, x) for x in instrs)
     blocks = [0]
     for i in instrs:
         if i.is_jump():
@@ -393,7 +393,7 @@ def compute_def_and_use(blocks):
 
 
 def liveness_analysis(blocks):
-    bd = {b.bid : b for b in blocks}
+    bd = dict((b.bid, b) for b in blocks)
     changes = True
     while changes:
         changes = False
