@@ -22,3 +22,9 @@ Optimizations Performed:
   - No-Op Removal
     Any no-ops such as loading the register into itself, adding 0 to itself and storing it, etc. are removed.
     The program is then recomposed with new line numbering.
+  - Reduce to Halt
+    This is more a special case than anything, but I thought it interesting. I reduce a program to a single HALT statement if
+    the program does not contain any statements that provide visible side effect such as OUT and IN.
+  - Array Reference Optimization
+    I don't actually have this as its own optimization, but with constant propagation, jump chaining and dead code elimination,
+    I should eliminate large chunks of the code around array references, particularly multi-dimensional arrays.
